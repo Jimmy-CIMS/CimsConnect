@@ -1,0 +1,10 @@
+Package: CimsConnect
+Title: Push Working Directory to API
+Version: 0.1.0
+Description: Compresses working directory and uploads via API.
+Depends: R (>= 3.5)
+Imports:
+    httr
+License: MIT
+Encoding: UTF-8
+LazyData: true
