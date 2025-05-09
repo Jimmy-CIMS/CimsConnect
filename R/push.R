@@ -9,13 +9,63 @@
 #' @export
 push <- function(labelName) {
   if (missing(labelName) || !nzchar(labelName)) stop("labelName cannot be empty")
-  zip_filename <- paste0(labelName, ".zip")
-  temp_zip_path <- file.path(tempdir(), zip_filename)
-  all_files <- list.files(getwd(), full.names = TRUE, recursive = TRUE, all.files = TRUE)
-  utils::zip(zipfile = temp_zip_path, files = all_files, flags = "-r9Xq")
+
+    # Create zip file path
+  zipfile <- paste0(labelName, ".zip")
+  
+  # Get current working dir (e.g., /home/ubuntu/source/myDemo1)
+  current_dir <- getwd()
+  
+  # Get just last folder name and its parent path
+  parent_dir <- dirname(current_dir)
+  folder_name <- basename(current_dir)
+  
+  # Temporarily switch to target folder to zip its content only
+  old_wd <- setwd(current_dir)
+  on.exit(setwd(old_wd), add = TRUE)  # Ensure we switch back even if error
+  
+  # List all files/folders inside current_dir (no hidden files)
+  files_to_zip <- list.files(all.files = FALSE, recursive = FALSE)
+  
+  # Compress (only contents, no full path)
+  utils::zip(zipfile = file.path(parent_dir, zipfile),
+             files = files_to_zip,
+             extras = "-r9Xq")
+
   api_url <- "http://appbridge.cims-global.tw/upload"
-  res <- httr::POST(url = api_url, body = list(labelName = labelName, file = httr::upload_file(temp_zip_path)), encode = "multipart")
-  unlink(temp_zip_path)
-  if (httr::status_code(res) == 200) message("Upload successful") else warning("Upload failed: ", httr::content(res, as = "text"))
-  return(res)
+  res <- httr::POST(
+    url = api_url, 
+    body = list(
+      labelName = labelName, 
+      file = httr::upload_file(file.path(parent_dir, zipfile))
+    ), 
+    encode = "multipart"
+  )
+  
+  # Remove zip file
+  unlink(file.path(parent_dir, zipfile))
+
+  # Parse JSON response
+  res_content <- httr::content(res, as = "parsed", type = "application/json")
+  
+  # Check for success conditions
+  success <- isTRUE(res_content$dockerfile_found) &&
+             isTRUE(res_content$docker_build$executed) &&
+             isTRUE(res_content$docker_build$success)
+  
+  # Return success/failure message
+  if (success) {
+    message("✅ Upload and Docker build succeeded: ", res_content$message)
+    return(invisible(TRUE))
+  } else {
+    warning_msg <- paste(
+      "❌ Upload or Docker build failed.",
+      if (!isTRUE(res_content$dockerfile_found)) "Dockerfile not found." else NULL,
+      if (!isTRUE(res_content$docker_build$executed)) "Docker build not executed." else NULL,
+      if (isTRUE(res_content$docker_build$executed) && !isTRUE(res_content$docker_build$success)) "Docker build failed." else NULL,
+      sep = " "
+    )
+    warning(warning_msg)
+    return(invisible(FALSE))
+  }
 }
