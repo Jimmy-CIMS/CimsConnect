@@ -1,0 +1,11 @@
+{
+  "api": {
+    "current_base_uri": "http://appbridge.cims-global.tw",
+    "environments": {
+      "localhost": "http://localhost",
+      "cims": "http://appbridge.cims-global.tw",
+      "dev": "http://dev.api.example.com",
+      "staging": "http://staging.api.example.com"
+    }
+  }
+}

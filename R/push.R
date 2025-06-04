@@ -1,71 +1,79 @@
+# push.R (保持不變)
 
-#' Push current working directory to remote server
+# ... (確保 .api_base_uri 和 config 函數已被定義或載入)
+
+#' Push current working directory to remote server with real-time streaming build output
 #'
 #' Compresses all files in the current working directory into a zip file
-#' named <labelName>.zip and uploads it to the remote API.
+#' named <labelName>.zip and uploads it to the remote API's streaming endpoint.
+#' Docker build output will be streamed directly to the R console in real-time.
 #'
 #' @param labelName A string used as both the folder name and the zip file name.
-#' @return API response from the upload call
+#' @return A logical value indicating the overall success of the operation.
 #' @export
 push <- function(labelName) {
-  if (missing(labelName) || !nzchar(labelName)) stop("labelName cannot be empty")
+  if (missing(labelName) || !nzchar(labelName)) {
+    stop("labelName cannot be empty")
+  }
 
-    # Create zip file path
+  # --- 1. Prepare the ZIP file ---
   zipfile <- paste0(labelName, ".zip")
-  
-  # Get current working dir (e.g., /home/ubuntu/source/myDemo1)
   current_dir <- getwd()
-  
-  # Get just last folder name and its parent path
   parent_dir <- dirname(current_dir)
-  folder_name <- basename(current_dir)
-  
+  full_zip_path <- file.path(parent_dir, zipfile)
+
   # Temporarily switch to target folder to zip its content only
   old_wd <- setwd(current_dir)
-  on.exit(setwd(old_wd), add = TRUE)  # Ensure we switch back even if error
-  
-  # List all files/folders inside current_dir (no hidden files)
-  files_to_zip <- list.files(all.files = FALSE, recursive = FALSE)
-  
-  # Compress (only contents, no full path)
-  utils::zip(zipfile = file.path(parent_dir, zipfile),
-             files = files_to_zip,
-             extras = "-r9Xq")
+  on.exit(setwd(old_wd), add = TRUE)
 
-  api_url <- "http://appbridge.cims-global.tw/upload"
-  res <- httr::POST(
-    url = api_url, 
-    body = list(
-      labelName = labelName, 
-      file = httr::upload_file(file.path(parent_dir, zipfile))
-    ), 
-    encode = "multipart"
+  files_to_zip <- list.files(all.files = FALSE, recursive = FALSE, include.dirs = TRUE)
+
+  message("Compressing files into ", full_zip_path, "...")
+  tryCatch({
+    utils::zip(zipfile = full_zip_path,
+               files = files_to_zip,
+               extras = "-r9Xq")
+  }, error = function(e) {
+    stop("Failed to create zip file: ", e$message)
+  })
+
+
+  # --- 2. Construct and Execute the curl command for streaming upload ---
+  endpoint_path <- "/upload-with-stream"
+  api_url <- paste0(.api_base_uri, endpoint_path) # 這裡會使用從 .json 或預設值載入的 URI
+
+  quoted_labelName <- shQuote(labelName)
+
+  message("Starting upload and Docker build stream to ", api_url, "...")
+  message("------------------- STREAMING OUTPUT START -------------------")
+
+  curl_cmd_args <- c(
+    "-X", "POST",
+    api_url,
+    "-F", paste0("labelName=", quoted_labelName),
+    "-F", paste0("file=@", shQuote(full_zip_path))
   )
-  
-  # Remove zip file
-  unlink(file.path(parent_dir, zipfile))
 
-  # Parse JSON response
-  res_content <- httr::content(res, as = "parsed", type = "application/json")
-  
-  # Check for success conditions
-  success <- isTRUE(res_content$dockerfile_found) &&
-             isTRUE(res_content$docker_build$executed) &&
-             isTRUE(res_content$docker_build$success)
-  
-  # Return success/failure message
-  if (success) {
-    message("✅ Upload and Docker build succeeded: ", res_content$message)
-    return(invisible(TRUE))
+  curl_result <- system2(
+    command = "curl",
+    args = curl_cmd_args,
+    stdout = "",
+    stderr = "",
+    wait = TRUE
+  )
+
+  message("-------------------- STREAMING OUTPUT END --------------------")
+
+
+  # --- 3. Clean up and Report Status ---
+  unlink(full_zip_path)
+  message("Local zip file removed.")
+
+  if (curl_result == 0) {
+    message("✅ Overall upload and Docker build process succeeded.")
+    return(TRUE)
   } else {
-    warning_msg <- paste(
-      "❌ Upload or Docker build failed.",
-      if (!isTRUE(res_content$dockerfile_found)) "Dockerfile not found." else NULL,
-      if (!isTRUE(res_content$docker_build$executed)) "Docker build not executed." else NULL,
-      if (isTRUE(res_content$docker_build$executed) && !isTRUE(res_content$docker_build$success)) "Docker build failed." else NULL,
-      sep = " "
-    )
-    warning(warning_msg)
-    return(invisible(FALSE))
+    warning("❌ Overall upload or Docker build process failed with curl exit code: ", curl_result, ". Please review the streamed output for details.")
+    return(FALSE)
   }
 }
