@@ -51,14 +51,18 @@ push <- function(labelName) {
     "-X", "POST",
     api_url,
     "-F", paste0("labelName=", quoted_labelName),
-    "-F", paste0("file=@", shQuote(full_zip_path))
+    "-F", paste0("file=@", shQuote(full_zip_path)),
+    "--silent",    # Suppress curl's progress bar and error messages
+    "--show-error", # Show errors even if silent
+    "--no-buffer", # Crucial: Disable curl's internal output buffering
+    "--output", "-" # Crucial: Direct output to stdout (the console)
   )
 
   curl_result <- system2(
     command = "curl",
     args = curl_cmd_args,
-    stdout = "",
-    stderr = "",
+    stdout = "", # "" means print to R console
+    stderr = "", # "" means print to R console
     wait = TRUE
   )
 
